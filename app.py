@@ -9,8 +9,7 @@ from datetime import datetime, timezone, timedelta
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 API_KEY_ODDS = os.getenv('API_KEY_ODDS')
-RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY', 'd473e6b9amsh975ef6df91017dap1b8259jsn7bad65cc2295')
-
+RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
 # ODDS AMPLIADAS PARA TESTE RÁPIDO (Não gasta mais créditos)
 ODD_MINIMA = 1.25
 ODD_MAXIMA = 3.50
@@ -148,3 +147,4 @@ if __name__ == "__main__":
         else:
             print(resultado)
         time.sleep(3600) # Mantido em 1 hora para segurança dos créditos
+
