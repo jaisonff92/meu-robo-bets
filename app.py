@@ -51,6 +51,7 @@ def buscar_palpites_lucrativos():
             try:
                 dt_jogo = datetime.strptime(jogo['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                 if dt_jogo <= agora_utc: continue
+                
                 bks = jogo.get('bookmakers', [])
                 if not bks: continue
                 mkts = bks[0].get('markets', [])
@@ -60,41 +61,4 @@ def buscar_palpites_lucrativos():
                 if not opcoes: continue
                 escolha = min(opcoes, key=lambda x: x['price'])
                 
-                lista_de_valor.append({
-                    'liga': jogo['sport_title'],
-                    'times': f"{jogo['home_team']} x {jogo['away_team']}",
-                    'horario': dt_jogo.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"),
-                    'palpite': "Mais de" if escolha['name'].lower() == "over" else "Menos de",
-                    'ponto': escolha['point'],
-                    'odd': escolha['price'],
-                    'timestamp': dt_jogo
-                })
-            except: continue
-
-        if len(lista_de_valor) < JOGOS_POR_BILHETE: return "⚠️ Sem jogos no critério."
-        lista_de_valor.sort(key=lambda x: x['timestamp'])
-        selecionados = lista_de_valor[:JOGOS_POR_BILHETE]
-        
-        texto = "💎 *BILHETE DE ALTO VALOR* 💎\n--------------------------------------\n"
-        odd_final = 1.0
-        for s in selecionados:
-            odd_final *= s['odd']
-            texto += f"🏆 *{s['liga']}*\n⏰ {s['horario']} - {s['times']}\n🔥 *{s['palpite']} {s['ponto']}* (@{s['odd']})\n\n"
-        texto += f"--------------------------------------\n💰 *ODD TOTAL: {odd_final:.2f}*"
-        return texto
-    except Exception as e: return f"❌ Erro: {e}"
-
-if __name__ == "__main__":
-    # Inicia servidor de saúde em segundo plano para o Render não desligar
-    threading.Thread(target=run_health_check, daemon=True).start()
-    
-    print("🚀 Robô Online no Render!")
-    while True:
-        resultado = buscar_palpites_lucrativos()
-        if "💎" in resultado:
-            enviar_para_telegram(resultado)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Bilhete enviado!")
-        else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {resultado}")
-        
-        time.sleep(3600) # Espera 1 hora
+                # --- TRAD
