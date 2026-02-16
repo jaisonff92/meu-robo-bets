@@ -9,7 +9,6 @@ from datetime import datetime, timezone, timedelta
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 API_KEY_ODDS = os.getenv('API_KEY_ODDS')
-# Chave da RapidAPI extraída das suas configurações
 RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY', 'd473e6b9amsh975ef6df91017dap1b8259jsn7bad65cc2295')
 
 # ODDS AMPLIADAS PARA TESTE RÁPIDO (Não gasta mais créditos)
@@ -79,7 +78,7 @@ def enviar_msg(texto):
     except: pass
 
 def buscar_palpites():
-    # URL corrigida para evitar o erro da linha 80 mostrado na sua imagem
+    # URL Corrigida para evitar o erro da linha 80 mostrado nos logs
     url_odds = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=totals&oddsFormat=decimal"
     try:
         res = requests.get(url_odds, timeout=30).json()
@@ -123,7 +122,7 @@ def buscar_palpites():
             except: continue
 
         if len(lista_analisada) < JOGOS_POR_BILHETE:
-            return f"ℹ️ Analisando: {len(lista_analisada)} jogos aprovados."
+            return f"ℹ️ Analisando: {len(lista_analisada)} aprovados pelo filtro."
 
         lista_analisada.sort(key=lambda x: x['ts'])
         tops = lista_analisada[:JOGOS_POR_BILHETE]
@@ -148,4 +147,4 @@ if __name__ == "__main__":
             print("✅ Bilhete enviado com sucesso!")
         else:
             print(resultado)
-        time.sleep(3600) # Intervalo seguro de 1 hora
+        time.sleep(3600) # Mantido em 1 hora para segurança dos créditos
