@@ -9,11 +9,13 @@ from datetime import datetime, timezone, timedelta
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 API_KEY_ODDS = os.getenv('API_KEY_ODDS')
+# Chave da RapidAPI extraída das suas configurações
 RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY', 'd473e6b9amsh975ef6df91017dap1b8259jsn7bad65cc2295')
 
-ODD_MINIMA = 1.50
-ODD_MAXIMA = 2.25
-JOGOS_POR_BILHETE = 1  # Ajustado para 1 para seu teste imediato
+# ODDS AMPLIADAS PARA TESTE RÁPIDO (Não gasta mais créditos)
+ODD_MINIMA = 1.25
+ODD_MAXIMA = 3.50
+JOGOS_POR_BILHETE = 1 
 
 # Cache para economizar API-Football (limite 100/dia)
 cache_estatisticas = {}
@@ -77,4 +79,73 @@ def enviar_msg(texto):
     except: pass
 
 def buscar_palpites():
-    url_odds = f"https://api
+    # URL corrigida para evitar o erro da linha 80 mostrado na sua imagem
+    url_odds = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=totals&oddsFormat=decimal"
+    try:
+        res = requests.get(url_odds, timeout=30).json()
+        agora_utc = datetime.now(timezone.utc)
+        lista_analisada = []
+        
+        for jogo in res:
+            try:
+                dt = datetime.strptime(jogo['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                if dt <= agora_utc: continue
+                
+                bks = jogo.get('bookmakers', [])
+                if not bks: continue
+                mkt = next((m for m in bks[0].get('markets', []) if m['key'] == 'totals'), None)
+                if not mkt: continue
+                
+                outcomes = mkt.get('outcomes', [])
+                viaveis = [o for o in outcomes if ODD_MINIMA <= o['price'] <= ODD_MAXIMA]
+                if not viaveis: continue
+                
+                escolha = min(viaveis, key=lambda x: x['price'])
+                ponto = escolha['point']
+                
+                m_home = obter_media_gols_real(jogo['home_team'])
+                m_away = obter_media_gols_real(jogo['away_team'])
+                media_geral = (m_home + m_away) / 2
+
+                if escolha['name'].lower() == "over" and media_geral < ponto: continue
+                if escolha['name'].lower() == "under" and media_geral > ponto: continue
+
+                lista_analisada.append({
+                    'liga': jogo['sport_title'],
+                    'times': f"{jogo['home_team']} x {jogo['away_team']}",
+                    'hora': dt.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"),
+                    'palpite': "Mais de" if escolha['name'].lower() == "over" else "Menos de",
+                    'ponto': ponto,
+                    'odd': escolha['price'],
+                    'media': round(media_geral, 2),
+                    'ts': dt
+                })
+            except: continue
+
+        if len(lista_analisada) < JOGOS_POR_BILHETE:
+            return f"ℹ️ Analisando: {len(lista_analisada)} jogos aprovados."
+
+        lista_analisada.sort(key=lambda x: x['ts'])
+        tops = lista_analisada[:JOGOS_POR_BILHETE]
+        
+        msg = "💎 *BILHETE COM ANÁLISE REAL* 💎\n\n"
+        total_odd = 1.0
+        for s in tops:
+            total_odd *= s['odd']
+            msg += f"🏆 *{s['liga']}*\n⏰ {s['hora']} - {s['times']}\n🔥 *{s['palpite']} {s['ponto']} Gols* (@{s['odd']})\n📊 Média das Equipes: {s['media']}\n\n"
+        
+        msg += f"--------------------------\n💰 *ODD TOTAL: {total_odd:.2f}*"
+        return msg
+    except Exception as e: return f"Erro no processamento: {e}"
+
+if __name__ == "__main__":
+    threading.Thread(target=run_health_check, daemon=True).start()
+    print("🚀 Robo Analisador Iniciado!")
+    while True:
+        resultado = buscar_palpites()
+        if "💎" in resultado:
+            enviar_msg(resultado)
+            print("✅ Bilhete enviado com sucesso!")
+        else:
+            print(resultado)
+        time.sleep(3600) # Intervalo seguro de 1 hora
