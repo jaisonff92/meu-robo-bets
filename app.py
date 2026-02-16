@@ -5,26 +5,23 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone, timedelta
 
-# --- CONFIGURAÇÕES VIA RENDER ---
-# Puxa automaticamente as chaves que você salvou no painel "Meio ambiente"
+# --- CONFIGURAÇÕES ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 API_KEY_ODDS = os.getenv('API_KEY_ODDS')
-RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY') 
+RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
 
-# PARÂMETROS DE FILTRO (Odds amplas para teste rápido)
 ODD_MINIMA = 1.25
 ODD_MAXIMA = 3.50
 JOGOS_POR_BILHETE = 1 
 
-# Sistema de Cache para economizar os 100 créditos diários da API-Football
 cache_estatisticas = {}
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Online - Analisando Estatisticas")
+        self.wfile.write(b"Bot Ativo")
 
 def run_health_check():
     port = int(os.environ.get("PORT", 8080))
@@ -33,8 +30,86 @@ def run_health_check():
 
 def obter_media_gols_real(nome_time):
     agora = datetime.now()
-    # Se o time foi consultado hoje, usa o dado salvo (gasta 0 creditos)
     if nome_time in cache_estatisticas:
+        if agora < cache_estatisticas[nome_time]['expira']:
+            return cache_estatisticas[nome_time]['media']
+
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    
+    try:
+        # 1. Busca ID do time
+        res_team = requests.get("https://api-football-v1.p.rapidapi.com/v3/teams", 
+                                headers=headers, params={"search": nome_time}, timeout=10).json()
+        
+        if not res_team.get('response'):
+            return 0
+            
+        team_id = res_team['response'][0]['team']['id']
+        
+        # 2. Busca média dos últimos 5 jogos
+        res_fixtures = requests.get("https://api-football-v1.p.rapidapi.com/v3/fixtures", 
+                                   headers=headers, params={"team": team_id, "last": 5}, timeout=10).json()
+        
+        total_gols = 0
+        jogos_contados = 0
+        for f in res_fixtures.get('response', []):
+            g_h = f['goals']['home'] if f['goals']['home'] is not None else 0
+            g_a = f['goals']['away'] if f['goals']['away'] is not None else 0
+            total_gols += (g_h + g_a)
+            jogos_contados += 1
+        
+        media = total_gols / jogos_contados if jogos_contados > 0 else 0
+        cache_estatisticas[nome_time] = {"media": media, "expira": agora + timedelta(hours=24)}
+        return media
+    except Exception as e:
+        print(f"Erro na API Football: {e}")
+        return 0
+
+def enviar_msg(texto):
+    if not TELEGRAM_TOKEN or not CHAT_ID: return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        requests.post(url, data={"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown"}, timeout=20)
+    except:
+        pass
+
+def buscar_palpites():
+    url_odds = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=totals&oddsFormat=decimal"
+    try:
+        res = requests.get(url_odds, timeout=30).json()
+        agora_utc = datetime.now(timezone.utc)
+        lista_analisada = []
+        
+        for jogo in res:
+            try:
+                dt = datetime.strptime(jogo['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                if dt <= agora_utc: continue
+                
+                bks = jogo.get('bookmakers', [])
+                if not bks: continue
+                mkt = next((m for m in bks[0].get('markets', []) if m['key'] == 'totals'), None)
+                if not mkt: continue
+                
+                escolha = min([o for o in mkt['outcomes'] if ODD_MINIMA <= o['price'] <= ODD_MAXIMA], key=lambda x: x['price'])
+                
+                m_home = obter_media_gols_real(jogo['home_team'])
+                m_away = obter_media_gols_real(jogo['away_team'])
+                media_geral = (m_home + m_away) / 2
+
+                if (escolha['name'].lower() == "over" and media_geral >= escolha['point']) or \
+                   (escolha['name'].lower() == "under" and media_geral <= escolha['point']):
+                    lista_analisada.append({
+                        'liga': jogo['sport_title'],
+                        'times': f"{jogo['home_team']} x {jogo['away_team']}",
+                        'hora': dt.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"),
+                        'palpite': "Mais de" if escolha['name'].lower() == "over" else "Menos de",
+                        'ponto': escolha['point'],
+                        'odd': escolha['price'],
+                        'media': round(media_geral, 2),
+                        'ts': dt    if nome_time in cache_estatisticas:
         if agora < cache_estatisticas[nome_time]['expira']:
             return cache_estatisticas[nome_time]['media']
 
@@ -161,3 +236,4 @@ if __name__ == "__main__":
         
         # Pausa de 1 hora para respeitar limites da API
         time.sleep(3600)
+
