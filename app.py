@@ -12,7 +12,7 @@ RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
 
 ODD_MINIMA = 1.25
 ODD_MAXIMA = 3.50
-JOGOS_POR_BILHETE = 1 
+JOGOS_POR_BILHETE = 2 
 
 cache_estatisticas = {}
 
@@ -90,3 +90,4 @@ if __name__ == "__main__":
         else:
             print(resultado)
         time.sleep(3600)
+
