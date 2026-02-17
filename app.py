@@ -49,45 +49,4 @@ def obter_media_gols_real(nome_time):
 
 def enviar_msg(texto):
     if not TELEGRAM_TOKEN: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown"}, timeout=20)
-
-def buscar_palpites():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=totals&oddsFormat=decimal"
-    try:
-        res = requests.get(url, timeout=30).json()
-        agora = datetime.now(timezone.utc)
-        lista = []
-        for jogo in res:
-            try:
-                dt = datetime.strptime(jogo['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                if dt <= agora: continue
-                mkt = next((m for m in jogo['bookmakers'][0]['markets'] if m['key'] == 'totals'), None)
-                if not mkt: continue
-                escolha = min([o for o in mkt['outcomes'] if ODD_MINIMA <= o['price'] <= ODD_MAXIMA], key=lambda x: x['price'])
-                m_home = obter_media_gols_real(jogo['home_team'])
-                m_away = obter_media_gols_real(jogo['away_team'])
-                media = (m_home + m_away) / 2
-                if (escolha['name'].lower() == "over" and media >= escolha['point']) or (escolha['name'].lower() == "under" and media <= escolha['point']):
-                    lista.append({'l': jogo['sport_title'], 't': f"{jogo['home_team']} x {jogo['away_team']}", 'h': dt.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"), 'p': escolha['name'], 'pt': escolha['point'], 'o': escolha['price'], 'm': round(media, 2), 'ts': dt})
-            except: continue
-        if len(lista) >= JOGOS_POR_BILHETE:
-            lista.sort(key=lambda x: x['ts'])
-            s = lista[0]
-            return f"💎 *BILHETE GERADO*\n🏆 {s['l']}\n⏰ {s['h']} - {s['t']}\n🔥 {s['p']} {s['pt']} Gols (@{s['o']})\n📊 Média: {s['m']}"
-        return f"ℹ️ Analisando: {len(lista)} aprovados."
-    except Exception as e:
-        return f"Erro: {e}"
-
-if __name__ == "__main__":
-    threading.Thread(target=run_health_check, daemon=True).start()
-    print("🚀 Bot Iniciado")
-    while True:
-        resultado = buscar_palpites()
-        if "💎" in resultado:
-            enviar_msg(resultado)
-            print("✅ Sucesso!")
-        else:
-            print(resultado)
-        time.sleep(3600)
-
+    url = f"https
