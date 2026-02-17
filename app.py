@@ -13,7 +13,7 @@ RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
 
 ODD_MINIMA = 1.25
 ODD_MAXIMA = 3.50
-JOGOS_POR_BILHETE = 2 
+JOGOS_POR_BILHETE = 2
 
 cache_estatisticas = {}
 
@@ -54,7 +54,6 @@ def enviar_msg(texto):
     if not TELEGRAM_TOKEN or not CHAT_ID: 
         print("Telegram Token ou Chat ID ausente.")
         return
-    # CORREÇÃO DA LINHA 52: URL completa e aspas fechadas
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown"}
     try:
@@ -62,14 +61,13 @@ def enviar_msg(texto):
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
 
-# Iniciar servidor de Health Check em uma thread separada para o Render não dar timeout
+# Iniciar servidor de Health Check em uma thread separada
 threading.Thread(target=run_health_check, daemon=True).start()
 
-# Exemplo de loop principal para o bot não fechar
 if __name__ == "__main__":
     print("Bot iniciado com sucesso!")
     enviar_msg("🚀 *Bot de Apostas Online e Operacional!*")
     
     while True:
-        # Aqui viria sua lógica de busca de odds e análise
-        time.sleep(3600) # Espera 1 hora para a próxima verificação
+        # Loop principal
+        time.sleep(3600)
