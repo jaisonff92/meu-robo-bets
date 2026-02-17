@@ -59,7 +59,7 @@ def buscar_palpites():
         agora = datetime.now(timezone.utc)
         lista = []
         
-        # Dicionário de tradução para exibição
+        # Dicionário de tradução
         traducoes = {"Over": "Acima de", "Under": "Abaixo de"}
 
         for jogo in res:
@@ -75,13 +75,12 @@ def buscar_palpites():
                 m_away = obter_media_gols_real(jogo['away_team'])
                 media = (m_home + m_away) / 2
                 
-                # A lógica de análise mantém o nome original da API
                 if (escolha['name'].lower() == "over" and media >= escolha['point']) or (escolha['name'].lower() == "under" and media <= escolha['point']):
                     lista.append({
                         'l': jogo['sport_title'], 
                         't': f"{jogo['home_team']} x {jogo['away_team']}", 
                         'h': dt.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"), 
-                        'p': traducoes.get(escolha['name'], escolha['name']), # Traduz apenas para o bilhete
+                        'p': traducoes.get(escolha['name'], escolha['name']), 
                         'pt': escolha['point'], 
                         'o': escolha['price'], 
                         'm': round(media, 2), 
@@ -98,10 +97,23 @@ def buscar_palpites():
             
             for s in selecionados:
                 msg += f"\n🏆 {s['l']}\n⏰ {s['h']} - {s['t']}\n🔥 {s['p']} {s['pt']} Gols (@{s['o']})\n📊 Média: {s['m']}\n"
-                odd_acumulada *= s['o']
+                odd_acumulada *= s['o'] # Corrigido: variável com um 'm' apenas
             
             msg += f"\n💰 *Odd Total: {round(odd_acumulada, 2)}*"
             return msg
             
         return f"ℹ️ Analisando: {len(lista)} aprovados."
-    except Exception
+    except Exception as e:
+        return f"Erro: {e}"
+
+if __name__ == "__main__":
+    threading.Thread(target=run_health_check, daemon=True).start()
+    print("🚀 Bot Iniciado")
+    while True:
+        resultado = buscar_palpites()
+        if "💎" in resultado:
+            enviar_msg(resultado)
+            print("✅ Sucesso!")
+        else:
+            print(resultado)
+        time.sleep(3600)
