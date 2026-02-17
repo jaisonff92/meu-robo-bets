@@ -5,6 +5,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone, timedelta
 
+# Configurações de Ambiente
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 API_KEY_ODDS = os.getenv('API_KEY_ODDS')
@@ -23,8 +24,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot OK")
 
 def run_health_check():
+    # O Render usa a porta da variável de ambiente PORT
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    print(f"Health check rodando na porta {port}")
     server.serve_forever()
 
 def obter_media_gols_real(nome_time):
@@ -48,5 +51,25 @@ def obter_media_gols_real(nome_time):
         return 0
 
 def enviar_msg(texto):
-    if not TELEGRAM_TOKEN: return
-    url = f"https
+    if not TELEGRAM_TOKEN or not CHAT_ID: 
+        print("Telegram Token ou Chat ID ausente.")
+        return
+    # CORREÇÃO DA LINHA 52: URL completa e aspas fechadas
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Erro ao enviar mensagem: {e}")
+
+# Iniciar servidor de Health Check em uma thread separada para o Render não dar timeout
+threading.Thread(target=run_health_check, daemon=True).start()
+
+# Exemplo de loop principal para o bot não fechar
+if __name__ == "__main__":
+    print("Bot iniciado com sucesso!")
+    enviar_msg("🚀 *Bot de Apostas Online e Operacional!*")
+    
+    while True:
+        # Aqui viria sua lógica de busca de odds e análise
+        time.sleep(3600) # Espera 1 hora para a próxima verificação
