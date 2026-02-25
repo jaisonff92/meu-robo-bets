@@ -1,6 +1,6 @@
 import requests
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -33,7 +33,7 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"Bot online e aguardando comandos no Telegram!")
+        self.wfile.write(b"Bot interativo online e aguardando comandos no Telegram!")
 
 def keep_alive_server():
     port = int(os.environ.get("PORT", 10000))
@@ -116,18 +116,24 @@ def get_historical_btts_probability(home_team, away_team):
     prob_no = 100.0 - prob_yes
     return prob_yes, prob_no
 
-def analyze_btts_opportunities(matches):
+def analyze_btts_opportunities(matches, time_limit_hours):
     now = datetime.now(timezone.utc)
+    max_time = now + timedelta(hours=time_limit_hours) # Calcula a hora limite
+    
     pre_filtered_matches = []
     for match in matches:
         try:
             commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-            if commence_time <= now:
+            
+            # FILTRO DE TEMPO: O jogo deve começar DEPOIS de agora, mas ANTES do limite de horas escolhido
+            if not (now < commence_time <= max_time):
                 continue
+                
             bookmaker = match['bookmakers'][0]
             market = bookmaker['markets'][0]
             odd_yes = next(item['price'] for item in market['outcomes'] if item['name'] == 'Yes')
             odd_no = next(item['price'] for item in market['outcomes'] if item['name'] == 'No')
+            
             if odd_yes <= 1.80 or odd_no <= 1.80:
                 pre_filtered_matches.append({
                     'raw': match,
@@ -185,10 +191,39 @@ def send_telegram_message(message):
     except Exception as e:
          print("Erro de conexão ao enviar mensagem: " + str(e))
 
-def run_analysis():
-    """Função que executa a varredura completa quando o comando é acionado."""
+def send_telegram_keyboard():
+    """Envia a mensagem com os botões de opções de horas."""
+    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
+    
+    # Criando os botões interativos
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "⏳ 1 Hora", "callback_data": "hours_1"},
+                {"text": "⏳ 3 Horas", "callback_data": "hours_3"}
+            ],
+            [
+                {"text": "⏳ 6 Horas", "callback_data": "hours_6"},
+                {"text": "⏳ 12 Horas", "callback_data": "hours_12"}
+            ]
+        ]
+    }
+    
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": "🤖 <b>Comando recebido!</b>\n\nPara qual intervalo de tempo você quer buscar os jogos?",
+        "parse_mode": "HTML",
+        "reply_markup": keyboard
+    }
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print("Erro ao enviar teclado: " + str(e))
+
+def run_analysis(time_limit_hours):
+    """Executa a varredura com base no limite de horas escolhido."""
     print("=======================================")
-    print("INICIANDO BUSCA MUNDIAL PELO COMANDO: " + datetime.now().strftime('%H:%M:%S'))
+    print("BUSCANDO JOGOS PARA AS PRÓXIMAS " + str(time_limit_hours) + " HORAS")
     
     leagues = get_all_soccer_leagues()
     if not leagues:
@@ -200,18 +235,18 @@ def run_analysis():
         send_telegram_message("🤖 Alerta: Nenhum jogo futuro com mercado BTTS encontrado agora.")
         return
         
-    top_5 = analyze_btts_opportunities(matches)
+    top_5 = analyze_btts_opportunities(matches, time_limit_hours)
     
     if not top_5:
-        send_telegram_message("🤖 Varredura concluída. Nenhum jogo com 65% de confiança estatística no momento.")
+        send_telegram_message("🤖 Varredura concluída. Nenhum jogo atendeu aos 65% de confiança nas próximas " + str(time_limit_hours) + " horas.")
         return
 
-    msg = "🌍 <b>TOP 5 (AMÉRICAS, EUROPA E ÁSIA) - AMBOS MARCAM</b> 🌍\n\n"
+    msg = "🌍 <b>TOP 5 MUNDIAL - PRÓXIMAS " + str(time_limit_hours) + "H</b> 🌍\n\n"
     for i, match in enumerate(top_5, 1):
         icone = "✅" if match['recommendation'] == "SIM" else "❌"
         msg += "<b>" + str(i) + ". " + match['match'] + "</b>\n"
         msg += "🏆 Liga: " + match['league'] + "\n"
-        msg += "🕒 Início: " + match['start_time'] + "\n"
+        msg += "🕒 Início: " + match['start_time'] + " (UTC)\n"
         msg += "📊 Recomendação: <b>BTTS " + match['recommendation'] + "</b> " + icone + "\n"
         msg += "📈 Confiança: " + str(round(match['probability'], 1)) + "%\n"
         msg += "💰 Odd: <b>" + str(match['odd']) + "</b>\n"
@@ -221,16 +256,15 @@ def run_analysis():
     print("Busca concluída e enviada!")
 
 # ==========================================
-# OUVINTE DO TELEGRAM (LISTENER)
+# OUVINTE DO TELEGRAM (LISTENER COM BOTÕES)
 # ==========================================
 def listen_for_commands():
-    """Fica escutando o chat do Telegram em busca de comandos."""
-    print("🤖 Bot conectado ao Telegram! Aguardando você digitar /buscar...")
+    """Fica escutando o chat do Telegram em busca de comandos e cliques em botões."""
+    print("🤖 Bot conectado ao Telegram! Aguardando o comando /buscar...")
     offset = None
     
     while True:
         try:
-            # Pede para a API do Telegram as últimas mensagens enviadas para o bot
             url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/getUpdates?timeout=30"
             if offset:
                 url += "&offset=" + str(offset)
@@ -240,29 +274,44 @@ def listen_for_commands():
             
             if data.get("ok"):
                 for update in data.get("result", []):
-                    # Marca a mensagem como lida
                     offset = update["update_id"] + 1
                     
-                    message = update.get("message", {})
-                    text = message.get("text", "")
-                    chat_id = str(message.get("chat", {}).get("id", ""))
+                    # 1. Verifica se é uma mensagem de texto (comando /buscar)
+                    if "message" in update:
+                        message = update["message"]
+                        text = message.get("text", "")
+                        chat_id = str(message.get("chat", {}).get("id", ""))
+                        
+                        if text == "/buscar" and chat_id == CHAT_ID:
+                            # Ao invés de buscar direto, envia os botões
+                            send_telegram_keyboard()
                     
-                    # Se você enviou /buscar no seu chat, ele aciona o motor!
-                    if text == "/buscar" and chat_id == CHAT_ID:
-                        send_telegram_message("🔎 <b>Comando recebido!</b> Iniciando a varredura das odds mundiais. Te envio o bilhete em alguns segundos...")
+                    # 2. Verifica se é um clique em um botão (Callback Query)
+                    elif "callback_query" in update:
+                        callback_query = update["callback_query"]
+                        callback_data = callback_query.get("data", "")
+                        callback_id = callback_query.get("id")
+                        chat_id = str(callback_query["message"]["chat"]["id"])
                         
-                        # Roda a busca em segundo plano para não travar o ouvinte
-                        threading.Thread(target=run_analysis).start()
-                        
+                        if chat_id == CHAT_ID and callback_data.startswith("hours_"):
+                            # Pega o número de horas do botão que foi clicado
+                            hours_selected = int(callback_data.split("_")[1])
+                            
+                            # Avisa que começou a trabalhar
+                            send_telegram_message("🔎 Entendido! Buscando as melhores opções para as próximas <b>" + str(hours_selected) + " horas</b>. Aguarde...")
+                            
+                            # Roda a busca em segundo plano
+                            threading.Thread(target=run_analysis, args=(hours_selected,)).start()
+                            
+                            # Responde ao Telegram para tirar aquele reloginho de "carregando" do botão
+                            requests.post("https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/answerCallbackQuery", json={"callback_query_id": callback_id})
+                            
         except requests.exceptions.Timeout:
-            continue # Timeout normal do Telegram, apenas tenta de novo
+            continue
         except Exception as e:
             print("Erro no listener do Telegram: " + str(e))
             time.sleep(5)
 
 if __name__ == "__main__":
-    # 1. Inicia o servidor para o Render manter o programa online
     threading.Thread(target=keep_alive_server, daemon=True).start()
-    
-    # 2. Inicia o ouvinte do Telegram que vai ficar aguardando o seu comando para sempre
     listen_for_commands()
