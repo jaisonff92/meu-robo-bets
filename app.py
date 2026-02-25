@@ -26,6 +26,25 @@ HEADERS_RAPIDAPI = {
 }
 
 # ==========================================
+# FILTRO DE PAÍSES E LIGAS DO USUÁRIO
+# ==========================================
+# Mapeamento da sua lista em português para os termos em inglês que a API usa
+ALLOWED_KEYWORDS = [
+    'brazil', 'england', 'epl', 'efl', 'spain', 'la_liga', 'italy', 'germany', 'bundesliga', 
+    'france', 'ligue', 'argentina', 'usa', 'mls', 'portugal', 'africa', 'andorra', 'saudi', 
+    'algeria', 'australia', 'austria', 'azerbaijan', 'belgium', 'bosnia', 'bulgaria', 'cameroon', 
+    'cambodia', 'qatar', 'chile', 'cyprus', 'colombia', 'korea', 'ivoire', 'costa', 'croatia', 
+    'denmark', 'uae', 'egypt', 'ecuador', 'scotland', 'slovakia', 'slovenia', 'ethiopia', 
+    'philippines', 'greece', 'guatemala', 'honduras', 'hong', 'hungary', 'india', 'indonesia', 
+    'iraq', 'ireland', 'iceland', 'israel', 'jamaica', 'japan', 'jordan', 'kosovo', 'kuwait', 
+    'lithuania', 'macedonia', 'malta', 'morocco', 'mexico', 'montenegro', 'nepal', 'nicaragua', 
+    'nigeria', 'oman', 'wales', 'netherlands', 'dutch', 'paraguay', 'peru', 'poland', 'kenya', 
+    'syria', 'czech', 'romania', 'rwanda', 'russia', 'serbia', 'singapore', 'sweden', 'switzerland', 
+    'swiss', 'thailand', 'tanzania', 'tunisia', 'turkey', 'ukraine', 'uganda', 'uruguay',
+    'uefa', 'conmebol', 'concacaf', 'afc', 'fifa', 'international', 'world', 'club'
+]
+
+# ==========================================
 # SERVIDOR WEB FANTASMA (PARA O RENDER)
 # ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
@@ -45,6 +64,7 @@ def keep_alive_server():
 # LÓGICA DO BOT DE APOSTAS
 # ==========================================
 def get_all_soccer_leagues():
+    """Busca as ligas e aplica o filtro rigoroso da sua lista."""
     url = 'https://api.the-odds-api.com/v4/sports'
     params = {'apiKey': API_KEY_ODDS}
     response = requests.get(url, params=params)
@@ -53,7 +73,13 @@ def get_all_soccer_leagues():
     if response.status_code == 200:
         for sport in response.json():
             if sport.get('group') == 'Soccer':
-                leagues.append(sport['key'])
+                # Pega a chave e o título da liga em minúsculo para checar o filtro
+                key_lower = sport.get('key', '').lower()
+                title_lower = sport.get('title', '').lower()
+                
+                # Se qualquer uma das palavras permitidas estiver no nome/chave da liga, ele aprova
+                if any(kw in key_lower or kw in title_lower for kw in ALLOWED_KEYWORDS):
+                    leagues.append(sport['key'])
     return leagues
 
 def get_upcoming_matches(leagues):
@@ -125,7 +151,6 @@ def analyze_btts_opportunities(matches, time_limit_hours):
         try:
             commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
             
-            # FILTRO DE TEMPO
             if not (now < commence_time <= max_time):
                 continue
                 
@@ -236,8 +261,7 @@ def run_analysis(time_limit_hours):
         send_telegram_message("🤖 Varredura concluída. Nenhum jogo atendeu aos 65% de confiança nas próximas " + str(time_limit_hours) + " horas.")
         return
 
-    # LINHA ATUALIZADA: O título agora se adapta ao tamanho da lista (Ex: "TOP 2 MUNDIAL")
-    msg = "🌍 <b>TOP " + str(len(top_5)) + " MUNDIAL - PRÓXIMAS " + str(time_limit_hours) + "H</b> 🌍\n\n"
+    msg = "🌍 <b>TOP " + str(len(top_5)) + " (LIGAS SELECIONADAS) - PRÓXIMAS " + str(time_limit_hours) + "H</b> 🌍\n\n"
     
     for i, match in enumerate(top_5, 1):
         icone = "✅" if match['recommendation'] == "SIM" else "❌"
@@ -289,7 +313,7 @@ def listen_for_commands():
                         if chat_id == CHAT_ID and callback_data.startswith("hours_"):
                             hours_selected = int(callback_data.split("_")[1])
                             
-                            send_telegram_message("🔎 Entendido! Buscando as melhores opções para as próximas <b>" + str(hours_selected) + " horas</b>. Aguarde...")
+                            send_telegram_message("🔎 Entendido! Buscando nas Ligas Selecionadas para as próximas <b>" + str(hours_selected) + " horas</b>. Aguarde...")
                             
                             threading.Thread(target=run_analysis, args=(hours_selected,)).start()
                             
