@@ -4,6 +4,13 @@ from datetime import datetime, timezone
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import builtins
+
+# Força o Python a mostrar os prints imediatamente no log do Render
+def print_flush(*args, **kwargs):
+    kwargs['flush'] = True
+    builtins.print(*args, **kwargs)
+print = print_flush
 
 # ==========================================
 # CONFIGURAÇÕES E CHAVES
@@ -63,6 +70,7 @@ def get_upcoming_matches(leagues):
         if response.status_code == 200:
             all_matches.extend(response.json())
         elif response.status_code == 429:
+            print("AVISO: Limite da The Odds API atingido!")
             break
         time.sleep(0.2) 
     return all_matches
@@ -135,6 +143,8 @@ def analyze_btts_opportunities(matches):
     analyzed_matches = []
     targets = pre_filtered_matches[:10]
     
+    print("Pré-filtro concluiu. Checando histórico dos " + str(len(targets)) + " jogos prováveis...")
+    
     for item in targets:
         match = item['raw']
         home_team = match['home_team']
@@ -153,68 +163,6 @@ def analyze_btts_opportunities(matches):
             continue 
             
         analyzed_matches.append({
-            'match': home_team + " x " + away_team,
+            'match': home_team.replace('&', 'e').replace('<', '') + " x " + away_team.replace('&', 'e').replace('<', ''),
             'league': match['sport_title'],
             'start_time': item['commence_time'].strftime('%d/%m %H:%M'),
-            'recommendation': recommendation,
-            'probability': prob,
-            'odd': odd,
-            'bookmaker': item['bookmaker']
-        })
-
-    analyzed_matches.sort(key=lambda x: x['probability'], reverse=True)
-    return analyzed_matches[:5]
-
-def send_telegram_message(message):
-    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    try:
-        requests.post(url, json=payload)
-    except Exception:
-        pass
-
-def main():
-    print("1. Buscando ligas...")
-    leagues = get_all_soccer_leagues()
-    if not leagues:
-        return
-        
-    print("2. Buscando odds...")
-    matches = get_upcoming_matches(leagues)
-    if not matches:
-        return
-        
-    print("3. Cruzando dados...")
-    top_5 = analyze_btts_opportunities(matches)
-    
-    if not top_5:
-        send_telegram_message("Sem jogos com 65% de confianca hoje.")
-        return
-
-    msg = "🌍 <b>TOP 5 MUNDIAL - AMBOS MARCAM</b> 🌍\n\n"
-    for i, match in enumerate(top_5, 1):
-        icone = "✅" if match['recommendation'] == "SIM" else "❌"
-        msg += "<b>" + str(i) + ". " + match['match'] + "</b>\n"
-        msg += "🏆 Liga: " + match['league'] + "\n"
-        msg += "🕒 Início: " + match['start_time'] + "\n"
-        msg += "📊 Recomendação: <b>BTTS " + match['recommendation'] + "</b> " + icone + "\n"
-        msg += "📈 Confiança: " + str(round(match['probability'], 1)) + "%\n"
-        msg += "💰 Odd: <b>" + str(match['odd']) + "</b>\n"
-        msg += "➖" * 12 + "\n"
-        
-    send_telegram_message(msg)
-    print("Enviado para o Telegram!")
-
-if __name__ == "__main__":
-    threading.Thread(target=keep_alive_server, daemon=True).start()
-    print("Iniciando loop principal...")
-    while True:
-        try:
-            main()
-        except Exception as e:
-            print("Erro no loop: " + str(e))
-        time.sleep(43200)
