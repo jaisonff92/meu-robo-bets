@@ -166,3 +166,78 @@ def analyze_btts_opportunities(matches):
             'match': home_team.replace('&', 'e').replace('<', '') + " x " + away_team.replace('&', 'e').replace('<', ''),
             'league': match['sport_title'],
             'start_time': item['commence_time'].strftime('%d/%m %H:%M'),
+            'recommendation': recommendation,
+            'probability': prob,
+            'odd': odd,
+            'bookmaker': item['bookmaker']
+        })
+
+    analyzed_matches.sort(key=lambda x: x['probability'], reverse=True)
+    return analyzed_matches[:5]
+
+def send_telegram_message(message):
+    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print("Mensagem enviada com sucesso para o Telegram!")
+        else:
+            print("ERRO DO TELEGRAM: " + str(response.status_code) + " - " + response.text)
+    except Exception as e:
+         print("Erro de conexão ao tentar enviar mensagem: " + str(e))
+
+def main():
+    print("=======================================")
+    print("INICIANDO NOVA BUSCA MUNDIAL: " + datetime.now().strftime('%H:%M:%S'))
+    print("1. Buscando ligas...")
+    leagues = get_all_soccer_leagues()
+    if not leagues:
+        print("Aviso: Nenhuma liga encontrada.")
+        send_telegram_message("🤖 Alerta: Nenhuma liga encontrada na API de odds.")
+        return
+        
+    print("2. Buscando odds nas ligas encontradas...")
+    matches = get_upcoming_matches(leagues)
+    if not matches:
+        print("Aviso: Nenhum jogo pré-live encontrado nas ligas.")
+        send_telegram_message("🤖 Alerta: Nenhum jogo futuro com mercado BTTS encontrado agora.")
+        return
+        
+    print("3. Cruzando dados estatísticos...")
+    top_5 = analyze_btts_opportunities(matches)
+    
+    if not top_5:
+        print("Aviso: Nenhum jogo bateu os 65% de confiança.")
+        send_telegram_message("🤖 Varredura concluída. Nenhum jogo com 65% de confiança estatística no momento.")
+        return
+
+    print("Gerando lista Top 5 para enviar...")
+    msg = "🌍 <b>TOP 5 MUNDIAL - AMBOS MARCAM</b> 🌍\n\n"
+    for i, match in enumerate(top_5, 1):
+        icone = "✅" if match['recommendation'] == "SIM" else "❌"
+        msg += "<b>" + str(i) + ". " + match['match'] + "</b>\n"
+        msg += "🏆 Liga: " + match['league'] + "\n"
+        msg += "🕒 Início: " + match['start_time'] + "\n"
+        msg += "📊 Recomendação: <b>BTTS " + match['recommendation'] + "</b> " + icone + "\n"
+        msg += "📈 Confiança: " + str(round(match['probability'], 1)) + "%\n"
+        msg += "💰 Odd: <b>" + str(match['odd']) + "</b>\n"
+        msg += "➖" * 12 + "\n"
+        
+    send_telegram_message(msg)
+    print("Busca mundial concluída com sucesso.")
+
+if __name__ == "__main__":
+    threading.Thread(target=keep_alive_server, daemon=True).start()
+    print("Iniciando loop principal do robô de apostas...")
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print("Erro crítico no loop: " + str(e))
+        print("Aguardando 12 horas para a próxima rodada...")
+        time.sleep(43200)
