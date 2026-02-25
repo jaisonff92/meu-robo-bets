@@ -50,7 +50,7 @@ def get_all_soccer_leagues():
             if sport.get('group') == 'Soccer':
                 leagues.append(sport['key'])
     else:
-        print(f"Erro ao buscar ligas: {response.text}")
+        print("Erro ao buscar ligas: " + response.text)
         
     return leagues
 
@@ -58,9 +58,9 @@ def get_upcoming_matches(leagues):
     """Busca jogos pré-live e odds de Ambos Marcam para todas as ligas mundiais."""
     all_matches = []
     
-    print(f"Baixando odds para {len(leagues)} ligas globais. Isso pode levar alguns segundos...")
+    print("Baixando odds para " + str(len(leagues)) + " ligas globais...")
     for league in leagues:
-        url = f'https://api.the-odds-api.com/v4/sports/{league}/odds'
+        url = 'https://api.the-odds-api.com/v4/sports/' + league + '/odds'
         params = {
             'apiKey': API_KEY_ODDS,
             'regions': 'eu,uk', 
@@ -168,7 +168,7 @@ def analyze_btts_opportunities(matches):
     analyzed_matches = []
     targets = pre_filtered_matches[:10]
     
-    print(f"Pré-filtro concluiu. Checando histórico dos {len(targets)} jogos mais prováveis do mundo...")
+    print("Pré-filtro concluiu. Checando histórico dos " + str(len(targets)) + " jogos mais prováveis do mundo...")
     
     for item in targets:
         match = item['raw']
@@ -189,7 +189,7 @@ def analyze_btts_opportunities(matches):
             continue 
             
         analyzed_matches.append({
-            'match': f"{home_team} x {away_team}",
+            'match': home_team + " x " + away_team,
             'league': match['sport_title'],
             'start_time': item['commence_time'].strftime('%d/%m %H:%M'),
             'recommendation': recommendation,
@@ -202,6 +202,69 @@ def analyze_btts_opportunities(matches):
     return analyzed_matches[:5]
 
 def send_telegram_message(message):
-    """Envia o resultado para o Telegram."""
-    # LINHA CORRIGIDA AQUI:
-    url = f"https://api.telegram.org/bot{
+    """Envia o resultado para o Telegram sem usar colchetes na URL para evitar erros de sintaxe."""
+    # O URL agora usa sinais de mais (+) ao invés de chaves ({})
+    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            print("Erro ao enviar para o Telegram: " + response.text)
+    except Exception as e:
+        print("Erro de conexão ao tentar enviar mensagem: " + str(e))
+
+def main():
+    print("1. Mapeando todas as ligas mundiais disponíveis...")
+    leagues = get_all_soccer_leagues()
+    
+    if not leagues:
+        print("Erro ao carregar as ligas mundiais.")
+        return
+        
+    print("2. Buscando a grade completa de jogos mundiais...")
+    matches = get_upcoming_matches(leagues)
+    
+    if not matches:
+        print("Nenhum jogo encontrado na varredura global.")
+        return
+        
+    print("3. Executando inteligência de filtro e estatística...")
+    top_5 = analyze_btts_opportunities(matches)
+    
+    if not top_5:
+        msg_erro = "🤖 A varredura mundial terminou, mas nenhum jogo bateu os 65% de confiança nas estatísticas para hoje."
+        send_telegram_message(msg_erro)
+        print(msg_erro)
+        return
+
+    msg = "🌍 <b>TOP 5 MUNDIAL - AMBOS MARCAM</b> 🌍\n"
+    msg += "<i>Analisado em todas as ligas globais ativas</i>\n\n"
+    
+    for i, match in enumerate(top_5, 1):
+        icone = "✅" if match['recommendation'] == "SIM" else "❌"
+        msg += "<b>" + str(i) + ". " + match['match'] + "</b>\n"
+        msg += "🏆 Liga: " + match['league'] + "\n"
+        msg += "🕒 Início: " + match['start_time'] + "\n"
+        msg += "📊 Recomendação: <b>Ambos Marcam " + match['recommendation'] + "</b> " + icone + "\n"
+        msg += "📈 Confiança do Histórico: " + str(round(match['probability'], 1)) + "%\n"
+        msg += "💰 Odd: <b>" + str(match['odd']) + "</b> (" + match['bookmaker'] + ")\n"
+        msg += "➖" * 12 + "\n"
+        
+    send_telegram_message(msg)
+    print("✅ Lista mundial enviada para o Telegram!")
+
+if __name__ == "__main__":
+    # 1. Inicia o servidor fantasma para o Render não matar o processo
+    threading.Thread(target=keep_alive_server, daemon=True).start()
+    
+    # 2. Roda o bot continuamente
+    print("Iniciando o loop principal do Bot Global...")
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print("Ocorreu um erro crítico durante a execução: "
