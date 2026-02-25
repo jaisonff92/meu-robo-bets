@@ -25,10 +25,6 @@ HEADERS_RAPIDAPI = {
     "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
 }
 
-# ==========================================
-# FILTRO DE PAÍSES E LIGAS DO USUÁRIO
-# ==========================================
-# Mapeamento da sua lista em português para os termos em inglês que a API usa
 ALLOWED_KEYWORDS = [
     'brazil', 'england', 'epl', 'efl', 'spain', 'la_liga', 'italy', 'germany', 'bundesliga', 
     'france', 'ligue', 'argentina', 'usa', 'mls', 'portugal', 'africa', 'andorra', 'saudi', 
@@ -45,26 +41,24 @@ ALLOWED_KEYWORDS = [
 ]
 
 # ==========================================
-# SERVIDOR WEB FANTASMA (PARA O RENDER)
+# SERVIDOR WEB FANTASMA
 # ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"Bot interativo online e aguardando comandos no Telegram!")
+        self.wfile.write(b"Bot interativo online!")
 
 def keep_alive_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    print("Servidor fantasma rodando na porta " + str(port))
     server.serve_forever()
 
 # ==========================================
 # LÓGICA DO BOT DE APOSTAS
 # ==========================================
 def get_all_soccer_leagues():
-    """Busca as ligas e aplica o filtro rigoroso da sua lista."""
     url = 'https://api.the-odds-api.com/v4/sports'
     params = {'apiKey': API_KEY_ODDS}
     response = requests.get(url, params=params)
@@ -73,17 +67,16 @@ def get_all_soccer_leagues():
     if response.status_code == 200:
         for sport in response.json():
             if sport.get('group') == 'Soccer':
-                # Pega a chave e o título da liga em minúsculo para checar o filtro
                 key_lower = sport.get('key', '').lower()
                 title_lower = sport.get('title', '').lower()
-                
-                # Se qualquer uma das palavras permitidas estiver no nome/chave da liga, ele aprova
                 if any(kw in key_lower or kw in title_lower for kw in ALLOWED_KEYWORDS):
                     leagues.append(sport['key'])
     return leagues
 
 def get_upcoming_matches(leagues):
     all_matches = []
+    api_limit_hit = False
+    
     for league in leagues:
         url = 'https://api.the-odds-api.com/v4/sports/' + league + '/odds'
         params = {
@@ -93,13 +86,16 @@ def get_upcoming_matches(leagues):
             'oddsFormat': 'decimal',
         }
         response = requests.get(url, params=params)
+        
         if response.status_code == 200:
             all_matches.extend(response.json())
-        elif response.status_code == 429:
-            print("AVISO: Limite da The Odds API atingido!")
+        elif response.status_code == 429 or response.status_code == 401:
+            api_limit_hit = True
+            print("LIMITE DA ODDS API ATINGIDO!")
             break
+            
         time.sleep(0.2) 
-    return all_matches
+    return all_matches, api_limit_hit
 
 def get_team_id(team_name):
     url = "https://api-football-v1.p.rapidapi.com/v3/teams"
@@ -150,7 +146,6 @@ def analyze_btts_opportunities(matches, time_limit_hours):
     for match in matches:
         try:
             commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-            
             if not (now < commence_time <= max_time):
                 continue
                 
@@ -180,11 +175,12 @@ def analyze_btts_opportunities(matches, time_limit_hours):
         away_team = match['away_team']
         prob_yes, prob_no = get_historical_btts_probability(home_team, away_team)
         
-        if prob_yes >= 65.0:
+        # DEFINA O LIMITE DE CONFIANÇA AQUI (Estava 65.0, baixei para 60.0 para testar)
+        if prob_yes >= 60.0:
             recommendation = "SIM"
             prob = prob_yes
             odd = item['odd_yes']
-        elif prob_no >= 65.0:
+        elif prob_no >= 60.0:
             recommendation = "NÃO"
             prob = prob_no
             odd = item['odd_no']
@@ -213,8 +209,8 @@ def send_telegram_message(message):
     }
     try:
         requests.post(url, json=payload)
-    except Exception as e:
-         print("Erro de conexão ao enviar mensagem: " + str(e))
+    except Exception:
+        pass
 
 def send_telegram_keyboard():
     url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
@@ -236,21 +232,21 @@ def send_telegram_keyboard():
         "parse_mode": "HTML",
         "reply_markup": keyboard
     }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print("Erro ao enviar teclado: " + str(e))
+    requests.post(url, json=payload)
 
 def run_analysis(time_limit_hours):
-    print("=======================================")
-    print("BUSCANDO JOGOS PARA AS PRÓXIMAS " + str(time_limit_hours) + " HORAS")
-    
     leagues = get_all_soccer_leagues()
     if not leagues:
         send_telegram_message("🤖 Alerta: Nenhuma liga encontrada na API de odds.")
         return
         
-    matches = get_upcoming_matches(leagues)
+    matches, odds_api_limit_hit = get_upcoming_matches(leagues)
+    
+    # MENSAGEM DE ALERTA SE A COTA ACABOU!
+    if odds_api_limit_hit and not matches:
+        send_telegram_message("🚨 <b>COTA ESGOTADA!</b>\n\nO seu limite mensal da <b>The Odds API</b> acabou. Vá no site deles, gere uma nova API Key com outro email e atualize no código.")
+        return
+        
     if not matches:
         send_telegram_message("🤖 Alerta: Nenhum jogo futuro com mercado BTTS encontrado agora.")
         return
@@ -258,10 +254,10 @@ def run_analysis(time_limit_hours):
     top_5 = analyze_btts_opportunities(matches, time_limit_hours)
     
     if not top_5:
-        send_telegram_message("🤖 Varredura concluída. Nenhum jogo atendeu aos 65% de confiança nas próximas " + str(time_limit_hours) + " horas.")
+        send_telegram_message("🤖 Varredura concluída. Nenhum jogo atendeu à confiança estatística nas próximas " + str(time_limit_hours) + " horas.")
         return
 
-    msg = "🌍 <b>TOP " + str(len(top_5)) + " (LIGAS SELECIONADAS) - PRÓXIMAS " + str(time_limit_hours) + "H</b> 🌍\n\n"
+    msg = "🌍 <b>TOP " + str(len(top_5)) + " (LIGAS VIP) - PRÓXIMAS " + str(time_limit_hours) + "H</b> 🌍\n\n"
     
     for i, match in enumerate(top_5, 1):
         icone = "✅" if match['recommendation'] == "SIM" else "❌"
@@ -274,15 +270,9 @@ def run_analysis(time_limit_hours):
         msg += "➖" * 12 + "\n"
         
     send_telegram_message(msg)
-    print("Busca concluída e enviada!")
 
-# ==========================================
-# OUVINTE DO TELEGRAM (LISTENER COM BOTÕES)
-# ==========================================
 def listen_for_commands():
-    print("🤖 Bot conectado ao Telegram! Aguardando o comando /buscar...")
     offset = None
-    
     while True:
         try:
             url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/getUpdates?timeout=30"
@@ -316,13 +306,11 @@ def listen_for_commands():
                             send_telegram_message("🔎 Entendido! Buscando nas Ligas Selecionadas para as próximas <b>" + str(hours_selected) + " horas</b>. Aguarde...")
                             
                             threading.Thread(target=run_analysis, args=(hours_selected,)).start()
-                            
                             requests.post("https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/answerCallbackQuery", json={"callback_query_id": callback_id})
                             
         except requests.exceptions.Timeout:
             continue
         except Exception as e:
-            print("Erro no listener do Telegram: " + str(e))
             time.sleep(5)
 
 if __name__ == "__main__":
