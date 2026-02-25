@@ -1,6 +1,9 @@
 import requests
 import time
 from datetime import datetime, timezone
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import builtins
 
 # Força o Python a mostrar os prints imediatamente
@@ -23,6 +26,22 @@ HEADERS_RAPIDAPI = {
 }
 
 # ==========================================
+# SERVIDOR WEB FANTASMA (PARA O RENDER)
+# ==========================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot online e aguardando comandos no Telegram!")
+
+def keep_alive_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    print("Servidor fantasma rodando na porta " + str(port))
+    server.serve_forever()
+
+# ==========================================
 # LÓGICA DO BOT DE APOSTAS
 # ==========================================
 def get_all_soccer_leagues():
@@ -43,7 +62,6 @@ def get_upcoming_matches(leagues):
         url = 'https://api.the-odds-api.com/v4/sports/' + league + '/odds'
         params = {
             'apiKey': API_KEY_ODDS,
-            # eu=Europa, uk=Reino Unido, us=Américas, au=Ásia/Oceania
             'regions': 'eu,uk,us,au', 
             'markets': 'btts',
             'oddsFormat': 'decimal',
@@ -125,8 +143,6 @@ def analyze_btts_opportunities(matches):
     analyzed_matches = []
     targets = pre_filtered_matches[:10]
     
-    print("Pré-filtro concluiu. Checando histórico dos " + str(len(targets)) + " jogos prováveis...")
-    
     for item in targets:
         match = item['raw']
         home_team = match['home_team']
@@ -165,40 +181,31 @@ def send_telegram_message(message):
         "parse_mode": "HTML"
     }
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print("Mensagem enviada com sucesso para o Telegram!")
-        else:
-            print("ERRO DO TELEGRAM: " + str(response.status_code) + " - " + response.text)
+        requests.post(url, json=payload)
     except Exception as e:
-         print("Erro de conexão ao tentar enviar mensagem: " + str(e))
+         print("Erro de conexão ao enviar mensagem: " + str(e))
 
-def main():
+def run_analysis():
+    """Função que executa a varredura completa quando o comando é acionado."""
     print("=======================================")
-    print("INICIANDO BUSCA MANUAL: " + datetime.now().strftime('%H:%M:%S'))
-    print("1. Buscando ligas mundiais...")
+    print("INICIANDO BUSCA MUNDIAL PELO COMANDO: " + datetime.now().strftime('%H:%M:%S'))
+    
     leagues = get_all_soccer_leagues()
     if not leagues:
-        print("Aviso: Nenhuma liga encontrada.")
         send_telegram_message("🤖 Alerta: Nenhuma liga encontrada na API de odds.")
         return
         
-    print("2. Buscando odds nas regiões: Américas, Europa e Ásia...")
     matches = get_upcoming_matches(leagues)
     if not matches:
-        print("Aviso: Nenhum jogo pré-live encontrado nas ligas.")
         send_telegram_message("🤖 Alerta: Nenhum jogo futuro com mercado BTTS encontrado agora.")
         return
         
-    print("3. Cruzando dados estatísticos...")
     top_5 = analyze_btts_opportunities(matches)
     
     if not top_5:
-        print("Aviso: Nenhum jogo bateu os 65% de confiança.")
         send_telegram_message("🤖 Varredura concluída. Nenhum jogo com 65% de confiança estatística no momento.")
         return
 
-    print("Gerando lista Top 5 para enviar...")
     msg = "🌍 <b>TOP 5 (AMÉRICAS, EUROPA E ÁSIA) - AMBOS MARCAM</b> 🌍\n\n"
     for i, match in enumerate(top_5, 1):
         icone = "✅" if match['recommendation'] == "SIM" else "❌"
@@ -211,11 +218,51 @@ def main():
         msg += "➖" * 12 + "\n"
         
     send_telegram_message(msg)
-    print("Busca concluída com sucesso!")
+    print("Busca concluída e enviada!")
+
+# ==========================================
+# OUVINTE DO TELEGRAM (LISTENER)
+# ==========================================
+def listen_for_commands():
+    """Fica escutando o chat do Telegram em busca de comandos."""
+    print("🤖 Bot conectado ao Telegram! Aguardando você digitar /buscar...")
+    offset = None
+    
+    while True:
+        try:
+            # Pede para a API do Telegram as últimas mensagens enviadas para o bot
+            url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/getUpdates?timeout=30"
+            if offset:
+                url += "&offset=" + str(offset)
+            
+            response = requests.get(url, timeout=40)
+            data = response.json()
+            
+            if data.get("ok"):
+                for update in data.get("result", []):
+                    # Marca a mensagem como lida
+                    offset = update["update_id"] + 1
+                    
+                    message = update.get("message", {})
+                    text = message.get("text", "")
+                    chat_id = str(message.get("chat", {}).get("id", ""))
+                    
+                    # Se você enviou /buscar no seu chat, ele aciona o motor!
+                    if text == "/buscar" and chat_id == CHAT_ID:
+                        send_telegram_message("🔎 <b>Comando recebido!</b> Iniciando a varredura das odds mundiais. Te envio o bilhete em alguns segundos...")
+                        
+                        # Roda a busca em segundo plano para não travar o ouvinte
+                        threading.Thread(target=run_analysis).start()
+                        
+        except requests.exceptions.Timeout:
+            continue # Timeout normal do Telegram, apenas tenta de novo
+        except Exception as e:
+            print("Erro no listener do Telegram: " + str(e))
+            time.sleep(5)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("Erro crítico na execução manual: " + str(e))
-    print("Script encerrado.")
+    # 1. Inicia o servidor para o Render manter o programa online
+    threading.Thread(target=keep_alive_server, daemon=True).start()
+    
+    # 2. Inicia o ouvinte do Telegram que vai ficar aguardando o seu comando para sempre
+    listen_for_commands()
