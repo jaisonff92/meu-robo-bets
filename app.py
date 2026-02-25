@@ -1,104 +1,134 @@
 import requests
-import time
-import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+import json
 
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
-API_KEY_ODDS = os.getenv('API_KEY_ODDS')
-RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
+# ==========================================
+# CONFIGURAÇÕES E CHAVES
+# ==========================================
+TELEGRAM_TOKEN = '8348998630:AAEtB2fQTIKkn2_w6dLmzfSMm7Jhl85vX9M'
+CHAT_ID = '8073333859'
+API_KEY_ODDS = '4fca1f2e9d9cca4384f0003c81aab497'
 
-ODD_MINIMA = 1.25
-ODD_MAXIMA = 3.50
-JOGOS_POR_BILHETE = 2 # Alterado para receber 2 jogos por bilhete
+# Configurações da API de Odds
+SPORT = 'soccer' # Pode especificar ligas como 'soccer_brazil_campeonato'
+REGIONS = 'eu,us' # Regiões das casas de apostas
+MARKETS = 'h2h' # Head to head (Vitória/Empate/Derrota)
+ODDS_FORMAT = 'decimal'
+DATE_FORMAT = 'iso'
 
-cache_estatisticas = {}
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot OK")
-
-def run_health_check():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
-
-def obter_media_gols_real(nome_time):
-    agora = datetime.now()
-    if nome_time in cache_estatisticas:
-        if agora < cache_estatisticas[nome_time]['expira']:
-            return cache_estatisticas[nome_time]['media']
+def get_upcoming_matches():
+    """Busca os próximos jogos de futebol e suas odds."""
+    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds'
+    params = {
+        'apiKey': API_KEY_ODDS,
+        'regions': REGIONS,
+        'markets': MARKETS,
+        'oddsFormat': ODDS_FORMAT,
+        'dateFormat': DATE_FORMAT,
+    }
     
-    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-    try:
-        res_t = requests.get("https://api-football-v1.p.rapidapi.com/v3/teams", headers=headers, params={"search": nome_time}, timeout=10).json()
-        if not res_t.get('response'): return 0
-        tid = res_t['response'][0]['team']['id']
-        res_f = requests.get("https://api-football-v1.p.rapidapi.com/v3/fixtures", headers=headers, params={"team": tid, "last": 5}, timeout=10).json()
-        total = sum((f['goals']['home'] or 0) + (f['goals']['away'] or 0) for f in res_f.get('response', []))
-        count = len(res_f.get('response', []))
-        media = total / count if count > 0 else 0
-        cache_estatisticas[nome_time] = {"media": media, "expira": agora + timedelta(hours=24)}
-        return media
-    except:
-        return 0
+    response = requests.get(url, params=params)
+    
+    if response.status_code != 200:
+        print(f"Erro na API de Odds: {response.status_code} - {response.text}")
+        return []
+        
+    return response.json()
 
-def enviar_msg(texto):
-    if not TELEGRAM_TOKEN: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": texto, "parse_mode": "Markdown"}, timeout=20)
-
-def buscar_palpites():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=totals&oddsFormat=decimal"
-    try:
-        res = requests.get(url, timeout=30).json()
-        agora = datetime.now(timezone.utc)
-        lista = []
-        for jogo in res:
+def analyze_best_options(matches):
+    """
+    Filtra jogos ao vivo e seleciona as 10 melhores opções.
+    A lógica de 'jogos passados' e 'melhor aposta' é simulada aqui.
+    """
+    valid_matches = []
+    now = datetime.now(timezone.utc)
+    
+    for match in matches:
+        # Pega o horário do jogo
+        commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
+        
+        # 1. Filtro: O jogo NÃO PODE estar acontecendo agora (deve ser no futuro)
+        # e deve ser do dia de hoje (limite de 24h)
+        time_diff = (commence_time - now).total_seconds()
+        if 0 < time_diff < 86400: # Jogo nas próximas 24 horas e não começou
+            
+            # Aqui você integraria sua lógica de jogos passados (ex: banco de dados local ou outra API).
+            # Para este exemplo, vamos calcular a "força" da aposta baseada na diferença de odds.
+            # Quanto maior a discrepância, mais claro é o favorito.
+            
             try:
-                dt = datetime.strptime(jogo['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                if dt <= agora: continue
-                mkt = next((m for m in jogo['bookmakers'][0]['markets'] if m['key'] == 'totals'), None)
-                if not mkt: continue
-                escolha = min([o for o in mkt['outcomes'] if ODD_MINIMA <= o['price'] <= ODD_MAXIMA], key=lambda x: x['price'])
-                m_home = obter_media_gols_real(jogo['home_team'])
-                m_away = obter_media_gols_real(jogo['away_team'])
-                media = (m_home + m_away) / 2
+                # Pegando as odds da primeira casa de apostas disponível
+                bookmaker = match['bookmakers'][0]
+                outcomes = bookmaker['markets'][0]['outcomes']
                 
-                if (escolha['name'].lower() == "over" and media >= escolha['point']) or (escolha['name'].lower() == "under" and media <= escolha['point']):
-                    # Tradução do Over e Under
-                    palpite_traduzido = "Mais de" if escolha['name'].lower() == "over" else "Menos de"
-                    
-                    lista.append({'l': jogo['sport_title'], 't': f"{jogo['home_team']} x {jogo['away_team']}", 'h': dt.astimezone(timezone(timedelta(hours=-3))).strftime("%H:%M"), 'p': palpite_traduzido, 'pt': escolha['point'], 'o': escolha['price'], 'm': round(media, 2), 'ts': dt})
-            except: continue
-            
-        if len(lista) >= JOGOS_POR_BILHETE:
-            lista.sort(key=lambda x: x['ts'])
-            
-            # Construindo a mensagem com 2 jogos
-            mensagem = "💎 *BILHETE GERADO*\n\n"
-            for i in range(JOGOS_POR_BILHETE):
-                s = lista[i]
-                mensagem += f"🏆 {s['l']}\n⏰ {s['h']} - {s['t']}\n🔥 {s['p']} {s['pt']} Gols (@{s['o']})\n📊 Média: {s['m']}\n\n"
+                # Coletando odds do time A, B e empate (se houver)
+                odds = [outcome['price'] for outcome in outcomes]
+                min_odd = min(odds)
+                max_odd = max(odds)
                 
-            return mensagem.strip() # Remove a quebra de linha extra no final
-            
-        return f"ℹ️ Analisando: {len(lista)} aprovados."
-    except Exception as e:
-        return f"Erro: {e}"
+                # Score da aposta (Apenas um exemplo: buscamos favoritos claros)
+                # Favoritos com odds entre 1.2 e 1.7 costumam ter alta probabilidade
+                score = 0
+                if 1.2 <= min_odd <= 1.7:
+                    score = (max_odd - min_odd) # Discrepância alta = bom indicativo
+                
+                valid_matches.append({
+                    'home_team': match['home_team'],
+                    'away_team': match['away_team'],
+                    'start_time': commence_time.strftime('%H:%M (UTC)'),
+                    'best_odd': min_odd,
+                    'bookmaker': bookmaker['title'],
+                    'score': score
+                })
+            except (IndexError, KeyError):
+                continue
+
+    # 2. Ordena as partidas pelo maior "score" (melhores oportunidades)
+    valid_matches.sort(key=lambda x: x['score'], reverse=True)
+    
+    # 3. Retorna apenas as 10 melhores opções
+    return valid_matches[:10]
+
+def send_telegram_message(message):
+    """Envia uma mensagem para o canal/chat do Telegram."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        print("Mensagem enviada com sucesso ao Telegram!")
+    else:
+        print(f"Erro ao enviar mensagem: {response.text}")
+
+def main():
+    print("Buscando jogos...")
+    matches = get_upcoming_matches()
+    
+    if not matches:
+        print("Nenhum jogo encontrado ou erro na API.")
+        return
+        
+    print("Analisando as melhores opções...")
+    top_10 = analyze_best_options(matches)
+    
+    if not top_10:
+        send_telegram_message("🤖 Não há boas oportunidades de apostas para os jogos restantes de hoje que não estejam ao vivo.")
+        return
+
+    # Montando a mensagem para o Telegram
+    msg = "⚽ <b>TOP 10 MELHORES OPORTUNIDADES DO DIA</b> ⚽\n"
+    msg += "<i>Jogos que ainda não começaram, baseados em análise de favoritismo:</i>\n\n"
+    
+    for i, match in enumerate(top_10, 1):
+        msg += f"<b>{i}. {match['home_team']} vs {match['away_team']}</b>\n"
+        msg += f"🕒 Horário: {match['start_time']}\n"
+        msg += f"📈 Melhor Odd (Favorito): {match['best_odd']} ({match['bookmaker']})\n"
+        msg += "➖" * 10 + "\n"
+        
+    send_telegram_message(msg)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_health_check, daemon=True).start()
-    print("🚀 Bot Iniciado")
-    while True:
-        resultado = buscar_palpites()
-        if "💎" in resultado:
-            enviar_msg(resultado)
-            print("✅ Sucesso!")
-        else:
-            print(resultado)
-        time.sleep(3600)
+    main()
