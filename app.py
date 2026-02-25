@@ -1,12 +1,9 @@
 import requests
 import time
 from datetime import datetime, timezone
-import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import builtins
 
-# Força o Python a mostrar os prints imediatamente no log do Render
+# Força o Python a mostrar os prints imediatamente
 def print_flush(*args, **kwargs):
     kwargs['flush'] = True
     builtins.print(*args, **kwargs)
@@ -24,22 +21,6 @@ HEADERS_RAPIDAPI = {
     "X-RapidAPI-Key": RAPIDAPI_KEY,
     "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
 }
-
-# ==========================================
-# SERVIDOR WEB FANTASMA (PARA O RENDER)
-# ==========================================
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b"Bot rodando OK!")
-
-def keep_alive_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    print("Servidor web rodando na porta " + str(port))
-    server.serve_forever()
 
 # ==========================================
 # LÓGICA DO BOT DE APOSTAS
@@ -62,7 +43,8 @@ def get_upcoming_matches(leagues):
         url = 'https://api.the-odds-api.com/v4/sports/' + league + '/odds'
         params = {
             'apiKey': API_KEY_ODDS,
-            'regions': 'eu,uk', 
+            # eu=Europa, uk=Reino Unido, us=Américas, au=Ásia/Oceania
+            'regions': 'eu,uk,us,au', 
             'markets': 'btts',
             'oddsFormat': 'decimal',
         }
@@ -193,15 +175,15 @@ def send_telegram_message(message):
 
 def main():
     print("=======================================")
-    print("INICIANDO NOVA BUSCA MUNDIAL: " + datetime.now().strftime('%H:%M:%S'))
-    print("1. Buscando ligas...")
+    print("INICIANDO BUSCA MANUAL: " + datetime.now().strftime('%H:%M:%S'))
+    print("1. Buscando ligas mundiais...")
     leagues = get_all_soccer_leagues()
     if not leagues:
         print("Aviso: Nenhuma liga encontrada.")
         send_telegram_message("🤖 Alerta: Nenhuma liga encontrada na API de odds.")
         return
         
-    print("2. Buscando odds nas ligas encontradas...")
+    print("2. Buscando odds nas regiões: Américas, Europa e Ásia...")
     matches = get_upcoming_matches(leagues)
     if not matches:
         print("Aviso: Nenhum jogo pré-live encontrado nas ligas.")
@@ -217,7 +199,7 @@ def main():
         return
 
     print("Gerando lista Top 5 para enviar...")
-    msg = "🌍 <b>TOP 5 MUNDIAL - AMBOS MARCAM</b> 🌍\n\n"
+    msg = "🌍 <b>TOP 5 (AMÉRICAS, EUROPA E ÁSIA) - AMBOS MARCAM</b> 🌍\n\n"
     for i, match in enumerate(top_5, 1):
         icone = "✅" if match['recommendation'] == "SIM" else "❌"
         msg += "<b>" + str(i) + ". " + match['match'] + "</b>\n"
@@ -229,15 +211,11 @@ def main():
         msg += "➖" * 12 + "\n"
         
     send_telegram_message(msg)
-    print("Busca mundial concluída com sucesso.")
+    print("Busca concluída com sucesso!")
 
 if __name__ == "__main__":
-    threading.Thread(target=keep_alive_server, daemon=True).start()
-    print("Iniciando loop principal do robô de apostas...")
-    while True:
-        try:
-            main()
-        except Exception as e:
-            print("Erro crítico no loop: " + str(e))
-        print("Aguardando 12 horas para a próxima rodada...")
-        time.sleep(43200)
+    try:
+        main()
+    except Exception as e:
+        print("Erro crítico na execução manual: " + str(e))
+    print("Script encerrado.")
