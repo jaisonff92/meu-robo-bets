@@ -1,6 +1,9 @@
 import requests
 import time
 from datetime import datetime, timezone
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ==========================================
 # CONFIGURAÇÕES E CHAVES
@@ -15,6 +18,26 @@ HEADERS_RAPIDAPI = {
     "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
 }
 
+# ==========================================
+# SERVIDOR WEB DUMMY (PARA O RENDER NÃO DESLIGAR)
+# ==========================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot de Apostas rodando com sucesso!")
+
+def keep_alive_server():
+    """Cria um servidor local para o Render reconhecer que o Web Service está ativo."""
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    print(f"Servidor web fantasma rodando na porta {port} para manter o Render ativo...")
+    server.serve_forever()
+
+# ==========================================
+# LÓGICA DO BOT DE APOSTAS
+# ==========================================
 def get_all_soccer_leagues():
     """Busca dinamicamente todas as ligas de futebol ativas no mundo."""
     url = 'https://api.the-odds-api.com/v4/sports'
@@ -40,7 +63,7 @@ def get_upcoming_matches(leagues):
         url = f'https://api.the-odds-api.com/v4/sports/{league}/odds'
         params = {
             'apiKey': API_KEY_ODDS,
-            'regions': 'eu,uk', # 'eu' e 'uk' englobam gigantes que operam no Brasil (Bet365, Pinnacle, 1xBet, etc)
+            'regions': 'eu,uk', 
             'markets': 'btts',
             'oddsFormat': 'decimal',
         }
@@ -48,8 +71,11 @@ def get_upcoming_matches(leagues):
         response = requests.get(url, params=params)
         if response.status_code == 200:
             all_matches.extend(response.json())
+        elif response.status_code == 429:
+            print("AVISO: Limite da The Odds API atingido.")
+            break
             
-        time.sleep(0.2) # Pausa leve para não tomar bloqueio por spam na API de Odds
+        time.sleep(0.2) 
             
     return all_matches
 
@@ -112,74 +138,3 @@ def get_historical_btts_probability(home_team, away_team):
 def analyze_btts_opportunities(matches):
     """Varre o mundo usando o pré-filtro e retorna as 5 melhores opções."""
     now = datetime.now(timezone.utc)
-    pre_filtered_matches = []
-    
-    # 1. PRÉ-FILTRO: Acha as maiores tendências globais sem gastar cota da RapidAPI
-    for match in matches:
-        try:
-            commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-            if commence_time <= now:
-                continue
-                
-            bookmaker = match['bookmakers'][0]
-            market = bookmaker['markets'][0]
-            
-            odd_yes = next(item['price'] for item in market['outcomes'] if item['name'] == 'Yes')
-            odd_no = next(item['price'] for item in market['outcomes'] if item['name'] == 'No')
-            
-            # Só armazena se o mercado já indica favoritismo (Odd menor que 1.80)
-            if odd_yes <= 1.80 or odd_no <= 1.80:
-                pre_filtered_matches.append({
-                    'raw': match,
-                    'commence_time': commence_time,
-                    'odd_yes': odd_yes,
-                    'odd_no': odd_no,
-                    'bookmaker': bookmaker['title']
-                })
-        except Exception:
-            continue
-            
-    # Ordena os jogos pelas menores odds (maior favoritismo segundo o mercado)
-    pre_filtered_matches.sort(key=lambda x: min(x['odd_yes'], x['odd_no']))
-    
-    # 2. ANÁLISE PROFUNDA: Só checa estatísticas dos 10 melhores do mundo para poupar API
-    analyzed_matches = []
-    targets = pre_filtered_matches[:10]
-    
-    print(f"Pré-filtro concluiu. Checando histórico dos {len(targets)} jogos mais prováveis do mundo...")
-    
-    for item in targets:
-        match = item['raw']
-        home_team = match['home_team']
-        away_team = match['away_team']
-        
-        prob_yes, prob_no = get_historical_btts_probability(home_team, away_team)
-        
-        if prob_yes >= 65.0:
-            recommendation = "SIM"
-            prob = prob_yes
-            odd = item['odd_yes']
-        elif prob_no >= 65.0:
-            recommendation = "NÃO"
-            prob = prob_no
-            odd = item['odd_no']
-        else:
-            continue 
-            
-        analyzed_matches.append({
-            'match': f"{home_team} x {away_team}",
-            'league': match['sport_title'],
-            'start_time': item['commence_time'].strftime('%d/%m %H:%M'),
-            'recommendation': recommendation,
-            'probability': prob,
-            'odd': odd,
-            'bookmaker': item['bookmaker']
-        })
-
-    # Ordena pelo histórico e pega o Top 5
-    analyzed_matches.sort(key=lambda x: x['probability'], reverse=True)
-    return analyzed_matches[:5]
-
-def send_telegram_message(message):
-    """Envia o resultado para o Telegram."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN
