@@ -19,7 +19,7 @@ HEADERS_RAPIDAPI = {
 }
 
 # ==========================================
-# SERVIDOR WEB DUMMY (PARA O RENDER NÃO DESLIGAR)
+# SERVIDOR WEB FANTASMA (PARA O RENDER NÃO DESLIGAR O BOT)
 # ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -138,3 +138,70 @@ def get_historical_btts_probability(home_team, away_team):
 def analyze_btts_opportunities(matches):
     """Varre o mundo usando o pré-filtro e retorna as 5 melhores opções."""
     now = datetime.now(timezone.utc)
+    pre_filtered_matches = []
+    
+    for match in matches:
+        try:
+            commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
+            if commence_time <= now:
+                continue
+                
+            bookmaker = match['bookmakers'][0]
+            market = bookmaker['markets'][0]
+            
+            odd_yes = next(item['price'] for item in market['outcomes'] if item['name'] == 'Yes')
+            odd_no = next(item['price'] for item in market['outcomes'] if item['name'] == 'No')
+            
+            if odd_yes <= 1.80 or odd_no <= 1.80:
+                pre_filtered_matches.append({
+                    'raw': match,
+                    'commence_time': commence_time,
+                    'odd_yes': odd_yes,
+                    'odd_no': odd_no,
+                    'bookmaker': bookmaker['title']
+                })
+        except Exception:
+            continue
+            
+    pre_filtered_matches.sort(key=lambda x: min(x['odd_yes'], x['odd_no']))
+    
+    analyzed_matches = []
+    targets = pre_filtered_matches[:10]
+    
+    print(f"Pré-filtro concluiu. Checando histórico dos {len(targets)} jogos mais prováveis do mundo...")
+    
+    for item in targets:
+        match = item['raw']
+        home_team = match['home_team']
+        away_team = match['away_team']
+        
+        prob_yes, prob_no = get_historical_btts_probability(home_team, away_team)
+        
+        if prob_yes >= 65.0:
+            recommendation = "SIM"
+            prob = prob_yes
+            odd = item['odd_yes']
+        elif prob_no >= 65.0:
+            recommendation = "NÃO"
+            prob = prob_no
+            odd = item['odd_no']
+        else:
+            continue 
+            
+        analyzed_matches.append({
+            'match': f"{home_team} x {away_team}",
+            'league': match['sport_title'],
+            'start_time': item['commence_time'].strftime('%d/%m %H:%M'),
+            'recommendation': recommendation,
+            'probability': prob,
+            'odd': odd,
+            'bookmaker': item['bookmaker']
+        })
+
+    analyzed_matches.sort(key=lambda x: x['probability'], reverse=True)
+    return analyzed_matches[:5]
+
+def send_telegram_message(message):
+    """Envia o resultado para o Telegram."""
+    # LINHA CORRIGIDA AQUI:
+    url = f"https://api.telegram.org/bot{
